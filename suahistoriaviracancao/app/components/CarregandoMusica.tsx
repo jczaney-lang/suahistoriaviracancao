@@ -18,16 +18,27 @@ export default function CarregandoMusica({ pedidoId }: Props) {
   const [indice, setIndice] = useState(0);
   const [status, setStatus] = useState("");
 
-  // Evita duas consultas acontecendo ao mesmo tempo
+  // Evita duas consultas simultâneas
   const verificandoRef = useRef(false);
+
+  // Controla se o sistema já terminou
+  const finalizadoRef = useRef(false);
+
+  // Guarda o intervalo para podermos pará-lo imediatamente
+  const intervaloRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!pedidoId) return;
 
     let ativo = true;
 
-    // Animação das etapas
+    // ---------------------------------------------------------
+    // ANIMAÇÃO DAS ETAPAS
+    // ---------------------------------------------------------
+
     const intervaloEtapas = setInterval(() => {
+      if (!ativo || finalizadoRef.current) return;
+
       setIndice((atual) => {
         if (atual >= etapas.length - 1) {
           return atual;
@@ -37,17 +48,55 @@ export default function CarregandoMusica({ pedidoId }: Props) {
       });
     }, 1800);
 
+    // ---------------------------------------------------------
+    // FUNÇÃO PARA IR AO RESULTADO
+    // ---------------------------------------------------------
+
+    const irParaResultado = () => {
+      if (!ativo) return;
+
+      if (finalizadoRef.current) return;
+
+      finalizadoRef.current = true;
+
+      console.log("====================================");
+      console.log("🎉 MÚSICA FINALIZADA!");
+      console.log("🛑 PARANDO CONSULTAS...");
+      console.log("➡️ Indo para o resultado...");
+      console.log("====================================");
+
+      // Para imediatamente o polling
+      if (intervaloRef.current) {
+        clearInterval(intervaloRef.current);
+        intervaloRef.current = null;
+      }
+
+      // Para a animação
+      clearInterval(intervaloEtapas);
+
+      // Vai para o resultado
+      window.location.href =
+        `/resultado?pedidoId=${pedidoId}`;
+    };
+
+    // ---------------------------------------------------------
+    // VERIFICAÇÃO DA MÚSICA
+    // ---------------------------------------------------------
+
     const verificarMusica = async () => {
       if (!ativo) return;
 
-      // Se já existe uma consulta rodando, não inicia outra
+      // Se já terminou, não consulta mais nada
+      if (finalizadoRef.current) return;
+
+      // Se já existe uma consulta acontecendo, não inicia outra
       if (verificandoRef.current) return;
 
       verificandoRef.current = true;
 
       try {
         // =====================================================
-        // 1. BUSCA O PEDIDO ATUAL
+        // 1. BUSCA O PEDIDO
         // =====================================================
 
         const respostaPedido = await fetch(
@@ -58,7 +107,7 @@ export default function CarregandoMusica({ pedidoId }: Props) {
         );
 
         if (!respostaPedido.ok) {
-          console.error("Erro ao buscar pedido.");
+          console.error("❌ Erro ao buscar pedido.");
           return;
         }
 
@@ -66,35 +115,36 @@ export default function CarregandoMusica({ pedidoId }: Props) {
 
         console.log("📦 PEDIDO ATUAL:", pedido);
 
-        if (!ativo) return;
+        if (!ativo || finalizadoRef.current) return;
 
         setStatus(pedido.pagamento_status || "");
 
         // =====================================================
-        // 2. SE PAGAMENTO FOI CONFIRMADO E JÁ TEM ÁUDIO
-        //    VAI DIRETO PARA O RESULTADO
+        // 2. MÚSICA JÁ ESTÁ PRONTA
         // =====================================================
 
         if (
-  pedido.audio_url &&
-  (
-    pedido.audio_status === "completed" ||
-    pedido.status === "concluido"
-  )
-) {
-  console.log("🎵 MÚSICA JÁ ESTÁ PRONTA!");
-  console.log("🔊 ÁUDIO:", pedido.audio_url);
-  console.log("📊 STATUS:", pedido.status);
-  console.log("🎧 AUDIO STATUS:", pedido.audio_status);
+          pedido.audio_url &&
+          (
+            pedido.audio_status === "completed" ||
+            pedido.status === "concluido"
+          )
+        ) {
+          console.log("🎵 MÚSICA JÁ ESTÁ PRONTA!");
+          console.log("🔊 ÁUDIO:", pedido.audio_url);
+          console.log("📊 STATUS:", pedido.status);
+          console.log(
+            "🎧 AUDIO STATUS:",
+            pedido.audio_status
+          );
 
-  window.location.href =
-    `/resultado?pedidoId=${pedidoId}`;
+          irParaResultado();
 
-  return;
-}
+          return;
+        }
 
         // =====================================================
-        // 3. SE AINDA NÃO PAGOU, AGUARDA
+        // 3. PAGAMENTO AINDA NÃO FOI CONFIRMADO
         // =====================================================
 
         if (pedido.pagamento_status !== "pago") {
@@ -107,114 +157,121 @@ export default function CarregandoMusica({ pedidoId }: Props) {
 
         // =====================================================
         // 4. PAGAMENTO OK, MAS AINDA NÃO TEM ÁUDIO
-        //    CONSULTA A MUREKA
         // =====================================================
 
-        if (pedido.task_id) {
+        if (!pedido.task_id) {
           console.log(
-            "🎵 Consultando status da música:",
-            pedido.task_id
-          );
-
-          const respostaMusica = await fetch(
-            `/api/status-musica?taskId=${encodeURIComponent(
-              pedido.task_id
-            )}`,
-            {
-              cache: "no-store",
-            }
-          );
-
-          if (!respostaMusica.ok) {
-            console.error(
-              "Erro ao consultar status da música."
-            );
-
-            return;
-          }
-
-          const resultadoMusica =
-            await respostaMusica.json();
-
-          console.log(
-            "🎼 STATUS DA MÚSICA:",
-            resultadoMusica
-          );
-
-          // ===================================================
-          // 5. MUITO IMPORTANTE:
-          //    O /api/status-musica pode ter acabado de
-          //    atualizar o Supabase.
-          //
-          //    Então buscamos o pedido NOVAMENTE.
-          // ===================================================
-
-          const respostaPedidoAtualizada =
-            await fetch(
-              `/api/pedidos/${pedidoId}`,
-              {
-                cache: "no-store",
-              }
-            );
-
-          if (!respostaPedidoAtualizada.ok) {
-            console.error(
-              "Erro ao buscar pedido atualizado."
-            );
-
-            return;
-          }
-
-          const pedidoAtualizado =
-            await respostaPedidoAtualizada.json();
-
-          console.log(
-            "🔄 PEDIDO ATUALIZADO:",
-            pedidoAtualizado
-          );
-
-          // ===================================================
-          // 6. SE PAGAMENTO + ÁUDIO ESTÃO OK,
-          //    VAI PARA O RESULTADO
-          // ===================================================
-
-          if (
-            pedidoAtualizado.pagamento_status === "pago" &&
-            pedidoAtualizado.audio_url
-          ) {
-            console.log(
-              "✅ PAGAMENTO CONFIRMADO E MÚSICA PRONTA!"
-            );
-
-            console.log(
-              "🔊 AUDIO URL:",
-              pedidoAtualizado.audio_url
-            );
-
-            window.location.href =
-              `/resultado?pedidoId=${pedidoId}`;
-
-            return;
-          }
-
-          // ===================================================
-          // 7. AINDA ESTÁ GERANDO
-          // ===================================================
-
-          console.log(
-            "⏳ Música ainda está sendo processada..."
+            "⏳ Pagamento confirmado. Aguardando task_id..."
           );
 
           return;
         }
 
+        console.log(
+          "🎵 Consultando status da música:",
+          pedido.task_id
+        );
+
         // =====================================================
-        // 8. PAGOU, MAS AINDA NÃO TEM TASK_ID
+        // 5. CONSULTA A MUREKA
+        // =====================================================
+
+        const respostaMusica = await fetch(
+          `/api/status-musica?taskId=${encodeURIComponent(
+            pedido.task_id
+          )}`,
+          {
+            cache: "no-store",
+          }
+        );
+
+        if (!respostaMusica.ok) {
+          console.error(
+            "❌ Erro ao consultar status da música."
+          );
+
+          return;
+        }
+
+        const resultadoMusica =
+          await respostaMusica.json();
+
+        console.log(
+          "🎼 STATUS DA MÚSICA:",
+          resultadoMusica
+        );
+
+        if (!ativo || finalizadoRef.current) return;
+
+        // =====================================================
+        // 6. BUSCA O PEDIDO NOVAMENTE
+        //    O endpoint pode ter acabado de atualizar o banco
+        // =====================================================
+
+        const respostaPedidoAtualizada =
+          await fetch(
+            `/api/pedidos/${pedidoId}`,
+            {
+              cache: "no-store",
+            }
+          );
+
+        if (!respostaPedidoAtualizada.ok) {
+          console.error(
+            "❌ Erro ao buscar pedido atualizado."
+          );
+
+          return;
+        }
+
+        const pedidoAtualizado =
+          await respostaPedidoAtualizada.json();
+
+        console.log(
+          "🔄 PEDIDO ATUALIZADO:",
+          pedidoAtualizado
+        );
+
+        if (!ativo || finalizadoRef.current) return;
+
+        // =====================================================
+        // 7. VERIFICA SE A MÚSICA TERMINOU
+        // =====================================================
+
+        if (
+          pedidoAtualizado.audio_url &&
+          (
+            pedidoAtualizado.audio_status === "completed" ||
+            pedidoAtualizado.status === "concluido"
+          )
+        ) {
+          console.log(
+            "✅ PAGAMENTO CONFIRMADO E MÚSICA PRONTA!"
+          );
+
+          console.log(
+            "🔊 AUDIO URL:",
+            pedidoAtualizado.audio_url
+          );
+
+          console.log(
+            "🎧 AUDIO STATUS:",
+            pedidoAtualizado.audio_status
+          );
+
+          irParaResultado();
+
+          return;
+        }
+
+        // =====================================================
+        // 8. AINDA ESTÁ GERANDO
         // =====================================================
 
         console.log(
-          "⏳ Pagamento confirmado. Aguardando task_id..."
+          "⏳ Música ainda está sendo processada..."
         );
+
       } catch (erro) {
         console.error(
           "❌ Erro ao verificar música:",
@@ -225,23 +282,38 @@ export default function CarregandoMusica({ pedidoId }: Props) {
       }
     };
 
-    // Primeira verificação imediatamente
+    // ---------------------------------------------------------
+    // PRIMEIRA VERIFICAÇÃO
+    // ---------------------------------------------------------
+
     verificarMusica();
 
-    // Depois verifica a cada 3 segundos
-    const intervalo = setInterval(
+    // ---------------------------------------------------------
+    // VERIFICA A CADA 3 SEGUNDOS
+    // ---------------------------------------------------------
+
+    intervaloRef.current = setInterval(
       verificarMusica,
       3000
     );
 
+    // ---------------------------------------------------------
+    // LIMPEZA
+    // ---------------------------------------------------------
+
     return () => {
       ativo = false;
 
-      clearInterval(intervalo);
       clearInterval(intervaloEtapas);
+
+      if (intervaloRef.current) {
+        clearInterval(intervaloRef.current);
+        intervaloRef.current = null;
+      }
 
       verificandoRef.current = false;
     };
+
   }, [pedidoId]);
 
   return (
