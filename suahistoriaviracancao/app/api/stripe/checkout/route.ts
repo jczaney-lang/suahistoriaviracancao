@@ -1,7 +1,24 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+const secretKey = process.env.STRIPE_SECRET_KEY;
+
+if (!secretKey) {
+  throw new Error("STRIPE_SECRET_KEY não configurada.");
+}
+
+const stripeMode = secretKey.startsWith("sk_live_")
+  ? "LIVE"
+  : secretKey.startsWith("sk_test_")
+  ? "TEST"
+  : "DESCONHECIDO";
+
+console.log("================================");
+console.log("STRIPE MODE:", stripeMode);
+console.log("STRIPE KEY PREFIX:", secretKey.substring(0, 8));
+console.log("================================");
+
+const stripe = new Stripe(secretKey, {
   apiVersion: "2026-07-29.dahlia",
 });
 
@@ -12,6 +29,8 @@ export async function POST(req: Request) {
     console.log("================================");
     console.log("PEDIDO RECEBIDO NO CHECKOUT:");
     console.log(pedidoId);
+    console.log("STRIPE MODE:", stripeMode);
+    console.log("================================");
 
     const metadata = {
       pedido_id: pedidoId,
@@ -35,20 +54,25 @@ export async function POST(req: Request) {
       ],
 
       success_url:
-`http://localhost:3000/sucesso?pedidoId=${pedidoId}&session_id={CHECKOUT_SESSION_ID}`,
+        `https://suahistoriaviracancao.com.br/sucesso?pedidoId=${pedidoId}&session_id={CHECKOUT_SESSION_ID}`,
 
-      cancel_url: "http://localhost:3000/",
+      cancel_url: "https://suahistoriaviracancao.com.br/",
     });
 
+    console.log("================================");
     console.log("SESSION CRIADA:");
     console.log(session.id);
+    console.log("SESSION MODE:", stripeMode);
+    console.log("================================");
 
     return NextResponse.json({
       url: session.url,
     });
   } catch (error: any) {
+    console.error("================================");
     console.error("ERRO NO CHECKOUT:");
     console.error(error);
+    console.error("================================");
 
     return NextResponse.json(
       {
